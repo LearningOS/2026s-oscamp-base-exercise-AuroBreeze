@@ -115,6 +115,19 @@ unsafe impl GlobalAlloc for FreeListAllocator {
         // - Check if curr address satisfies align, and (*curr).size >= size
         // - If found, remove it from the list (update prev's next or the free_list head)
         // - Return curr as *mut u8
+        let mut current = self.free_list_head();
+        while let Some(curr) = current.as_ref() {
+            if curr.size < size{
+                current = curr.next;
+                continue;
+            }
+            let aligned = (curr.size + align - 1) & !(align - 1);
+            let next = aligned + size;
+            if next > self.heap_end {
+                return null_mut();
+            }
+
+        }
 
         // TODO: Step 2 — no suitable block in free_list, allocate from bump region
         //
