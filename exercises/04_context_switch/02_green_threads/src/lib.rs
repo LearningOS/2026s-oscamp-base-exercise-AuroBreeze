@@ -137,7 +137,38 @@ impl Scheduler {
     ///    `sp` must be 16-byte aligned (e.g. `(stack_top - 16) & !15` to leave headroom).
     /// 3. Push a `GreenThread` with this context, state `Ready`, and `entry` stored for the wrapper to call.
     pub fn spawn(&mut self, entry: extern "C" fn()) {
-        todo!("alloc stack, init ctx with ra=thread_wrapper and aligned sp, push GreenThread(Ready, entry)")
+        let buf = vec![0u8; STACK_SIZE];
+        let start_ptr = buf.as_ptr() as u64;
+        let raw_stack_top = start_ptr + (STACK_SIZE as u64);
+        let sp: u64 = (raw_stack_top - 16) & !15;
+        let ra = thread_wrapper as *const () as u64;
+
+        let thread = TaskContext {
+            sp,
+            ra,
+            s0: 0,
+            s1: 0,
+            s2: 0,
+            s3: 0,
+            s4: 0,
+            s5: 0,
+            s6: 0,
+            s7: 0,
+            s8: 0,
+            s9: 0,
+            s10: 0,
+            s11: 0,
+        };
+
+        let greeting = GreenThread {
+            ctx: thread,
+            state: ThreadState::Ready,
+            _stack: Some(buf),
+            entry: Some(entry),
+        };
+
+        self.threads.push(greeting);
+        // todo!("alloc stack, init ctx with ra=thread_wrapper and aligned sp, push GreenThread(Ready, entry)")
     }
 
     /// Run the scheduler until all threads (except the main one) are `Finished`.
@@ -146,12 +177,74 @@ impl Scheduler {
     /// 2. Loop: if all threads in `threads[1..]` are `Finished`, break; otherwise call `schedule_next()` (which may switch away and later return).
     /// 3. Clear `SCHEDULER` when done.
     pub fn run(&mut self) {
-        todo!("set SCHEDULER to self, loop until threads[1..] all Finished, call schedule_next, then clear SCHEDULER")
+        unsafe {
+            SCHEDULER = self as *mut _;
+        }
+        loop {
+            let alive = self
+                .threads
+                .iter()
+                .skip(1)
+                .any(|t| t.state != ThreadState::Finished);
+            if !alive {
+                break;
+            }
+            self.schedule_next();
+        }
+
+        unsafe {
+            SCHEDULER = std::ptr::null_mut();
+        }
+
+        // todo!("set SCHEDULER to self, loop until threads[1..] all Finished, call schedule_next, then clear SCHEDULER")
     }
 
     /// Find the next ready thread (starting from `current + 1` round-robin), mark current as `Ready` (if not `Finished`), mark next as `Running`, set `CURRENT_THREAD_ENTRY` if the next thread has an entry, then switch to it.
     fn schedule_next(&mut self) {
-        todo!("round-robin find next Ready, set current Ready (if not Finished), next Running, CURRENT_THREAD_ENTRY, then switch_context")
+        let old_idx = self.current;
+        let mut next_idx = old_idx;
+
+        'out: {
+            for i in (old_idx + 1)..self.threads.len() {
+                if self.threads[i].state == ThreadState::Ready {
+                    next_idx = i;
+                    break 'out;
+                }
+            }
+            for i in 0..=old_idx {
+                if self.threads[i].state == ThreadState::Ready {
+                    next_idx = i;
+                    break 'out;
+                }
+            }
+        }
+
+        if self.threads[next_idx].state != ThreadState::Ready {
+            return;
+        }
+
+        if self.threads[old_idx].state != ThreadState::Finished {
+            self.threads[old_idx].state = ThreadState::Ready;
+        }
+
+        self.threads[next_idx].state = ThreadState::Running;
+        self.current = next_idx;
+
+        if let Some(entry) = self.threads[next_idx].entry.take() {
+            unsafe {
+                CURRENT_THREAD_ENTRY = Some(entry);
+            }
+        }
+        unsafe {
+            let ptr = self.threads.as_mut_ptr();
+
+            let old_ctx = &mut (*ptr.add(old_idx)).ctx;
+            let new_ctx = &(*ptr.add(next_idx)).ctx;
+
+            switch_context(old_ctx, new_ctx);
+        }
+
+        // todo!("round-robin find next Ready, set current Ready (if not Finished), next Running, CURRENT_THREAD_ENTRY, then switch_context")
     }
 }
 
